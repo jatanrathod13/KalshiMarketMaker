@@ -35,3 +35,36 @@ def count_value(payload: Dict, base_key: str, default: float = 0.0) -> float:
 
 def position_count(position: Dict) -> int:
     return int(count_value(position, "position"))
+
+
+def has_yes_bid(market: Dict) -> bool:
+    if market.get("yes_bid_size_fp") is not None:
+        return count_value(market, "yes_bid_size") > 0
+    bid = price_dollars(market, "yes_bid")
+    return bid is not None and bid > 0
+
+
+def has_yes_ask(market: Dict) -> bool:
+    if market.get("yes_ask_size_fp") is not None:
+        return count_value(market, "yes_ask_size") > 0
+    ask = price_dollars(market, "yes_ask")
+    return ask is not None and ask < 1
+
+
+def is_two_sided(market: Dict) -> bool:
+    return has_yes_bid(market) and has_yes_ask(market)
+
+
+def order_action(order: Dict, trade_side: str) -> Optional[str]:
+    """Buy/sell direction of an order relative to ``trade_side``.
+
+    Uses ``book_side`` (bid = buy YES / sell NO); the legacy ``side``/``action``
+    fields are deprecated by the API and only used as a fallback.
+    """
+    book_side = order.get("book_side")
+    if book_side in ("bid", "ask"):
+        buys_yes = book_side == "bid"
+        return "buy" if buys_yes == (trade_side == "yes") else "sell"
+    if order.get("side") == trade_side:
+        return order.get("action")
+    return None

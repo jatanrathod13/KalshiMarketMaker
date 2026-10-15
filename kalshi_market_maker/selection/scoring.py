@@ -1,6 +1,7 @@
+from datetime import datetime, timezone
 from typing import Dict, List, Tuple
 
-from ..core.fields import count_value, price_dollars
+from ..core.fields import count_value, is_two_sided, price_dollars
 
 
 def safe_float(value, default=0.0):
@@ -50,12 +51,24 @@ def is_supported_binary_market(market: Dict) -> bool:
     return True
 
 
+def minutes_to_close(market: Dict) -> float:
+    close_time = market.get("close_time")
+    if not close_time:
+        return float("inf")
+    try:
+        closes_at = datetime.fromisoformat(str(close_time).replace("Z", "+00:00"))
+    except ValueError:
+        return float("inf")
+    return (closes_at - datetime.now(timezone.utc)).total_seconds() / 60
+
+
 def select_top_markets(markets: List[Dict], selector_cfg: Dict) -> List[Tuple[str, float, float, float]]:
     min_volume_24h = safe_float(selector_cfg.get("min_volume_24h", 100))
     min_spread_cents = safe_float(selector_cfg.get("min_spread_cents", 1))
     top_n = int(selector_cfg.get("top_n", 8))
     volume_weight = safe_float(selector_cfg.get("volume_weight", 0.5))
     spread_weight = safe_float(selector_cfg.get("spread_weight", 0.5))
+    min_minutes_to_close = safe_float(selector_cfg.get("min_minutes_to_close", 10))
 
     def collect_candidates(ignore_thresholds: bool) -> List[Dict]:
         collected = []
@@ -65,6 +78,11 @@ def select_top_markets(markets: List[Dict], selector_cfg: Dict) -> List[Tuple[st
 
             ticker = market.get("ticker")
             if not ticker:
+                continue
+
+            # Never quote one-sided books or markets about to close; these are hard
+            # filters, not relaxed by the ignore_thresholds fallback below.
+            if not is_two_sided(market) or minutes_to_close(market) < min_minutes_to_close:
                 continue
 
             volume_24h = count_value(market, "volume_24h", default=count_value(market, "volume"))

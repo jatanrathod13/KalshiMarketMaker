@@ -12,7 +12,7 @@ import requests
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519, padding
 
-from .fields import position_count, price_dollars
+from .fields import is_two_sided, position_count, price_dollars
 from .interfaces import AbstractTradingAPI
 
 
@@ -153,24 +153,22 @@ class KalshiTradingAPI(AbstractTradingAPI):
 
         return total_position
 
-    def get_price(self) -> Dict[str, float]:
+    def get_price(self) -> Dict[str, Optional[float]]:
+        """Mid prices per side, or None when the book is not two-sided.
+
+        An empty side is reported by the API as a 0/1 dollar price with zero size;
+        averaging that in produces a fake mid, so we refuse to quote instead.
+        """
         path = f"/markets/{self.market_ticker}"
-        data = self.make_request("GET", path)
+        market = self.make_request("GET", path)["market"]
 
-        market = data["market"]
+        if not is_two_sided(market):
+            return {"yes": None, "no": None}
 
-        def side_quotes(side: str):
-            bid = price_dollars(market, f"{side}_bid")
-            ask = price_dollars(market, f"{side}_ask")
-            return (0.0 if bid is None else bid), (1.0 if ask is None else ask)
-
-        yes_bid, yes_ask = side_quotes("yes")
-        no_bid, no_ask = side_quotes("no")
-
-        yes_mid_price = round((yes_bid + yes_ask) / 2, 2)
-        no_mid_price = round((no_bid + no_ask) / 2, 2)
-
-        return {"yes": yes_mid_price, "no": no_mid_price}
+        yes_bid = price_dollars(market, "yes_bid")
+        yes_ask = price_dollars(market, "yes_ask")
+        yes_mid_price = round((yes_bid + yes_ask) / 2, 4)
+        return {"yes": yes_mid_price, "no": round(1 - yes_mid_price, 4)}
 
     def place_order(self, action: str, side: str, price: float, quantity: int, expiration_ts: int = None) -> str:
         return self.place_order_for_ticker(
@@ -193,8 +191,6 @@ class KalshiTradingAPI(AbstractTradingAPI):
     ) -> str:
         # V2 orders live on a single YES book: buying YES (or selling NO) is a bid,
         # selling YES (or buying NO) is an ask, priced in YES dollars.
-        # V2 create has no expiration field, so expiration_ts is not sent; workers
-        # and the liquidation loop cancel stale orders themselves.
         action = action.lower()
         if side == "yes":
             book_side = "bid" if action == "buy" else "ask"
@@ -217,6 +213,8 @@ class KalshiTradingAPI(AbstractTradingAPI):
             "time_in_force": "good_till_canceled",
             "self_trade_prevention_type": "taker_at_cross",
         }
+        if expiration_ts is not None:
+            data["expiration_time"] = int(expiration_ts)
 
         response = self.make_request("POST", path, data=data)
         return str(response["order_id"])

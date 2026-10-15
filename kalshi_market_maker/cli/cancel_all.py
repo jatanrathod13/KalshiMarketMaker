@@ -4,7 +4,7 @@ from typing import Dict, List
 
 from dotenv import load_dotenv
 
-from ..core.fields import position_count, price_dollars
+from ..core.fields import order_action, position_count, price_dollars
 from ..factories import create_api
 from ..logging_utils import build_logger
 
@@ -12,9 +12,9 @@ from ..logging_utils import build_logger
 def filter_orders(orders: List[Dict], side: str = None, action: str = None) -> List[Dict]:
     filtered = orders
     if side:
-        filtered = [order for order in filtered if order.get("side") == side]
+        filtered = [order for order in filtered if order.get("outcome_side", order.get("side")) == side]
     if action:
-        filtered = [order for order in filtered if order.get("action") == action]
+        filtered = [order for order in filtered if order_action(order, side or "yes") == action]
     return filtered
 
 

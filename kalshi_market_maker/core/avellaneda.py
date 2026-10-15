@@ -2,7 +2,7 @@ import math
 import time
 from typing import Dict, List, Tuple, Optional
 
-from .fields import count_value, position_count, price_dollars
+from .fields import count_value, order_action, position_count, price_dollars
 from .interfaces import AbstractTradingAPI
 
 
@@ -53,6 +53,12 @@ class AvellanedaMarketMaker:
             current_time = time.time() - start_time
             mid_prices = self.api.get_price()
             mid_price = mid_prices[self.trade_side]
+            if mid_price is None:
+                self.logger.warning("Order book is not two-sided; pulling quotes and skipping this cycle")
+                for order in self.api.get_orders():
+                    self.api.cancel_order(order["order_id"])
+                time.sleep(dt)
+                continue
             inventory = self.api.get_position()
 
             reservation_price = self.calculate_reservation_price(mid_price, inventory, current_time)
@@ -145,12 +151,11 @@ class AvellanedaMarketMaker:
         pending_sell = 0
 
         for order in current_orders:
-            if order.get("side") != self.trade_side:
-                continue
             remaining = int(count_value(order, "remaining_count"))
-            if order.get("action") == "buy":
+            action = order_action(order, self.trade_side)
+            if action == "buy":
                 pending_buy += remaining
-            elif order.get("action") == "sell":
+            elif action == "sell":
                 pending_sell += remaining
 
         return pending_buy, pending_sell
@@ -197,11 +202,11 @@ class AvellanedaMarketMaker:
         sell_orders: List[Dict] = []
 
         for order in current_orders:
-            if order["side"] == self.trade_side:
-                if order["action"] == "buy":
-                    buy_orders.append(order)
-                elif order["action"] == "sell":
-                    sell_orders.append(order)
+            action = order_action(order, self.trade_side)
+            if action == "buy":
+                buy_orders.append(order)
+            elif action == "sell":
+                sell_orders.append(order)
 
         self.handle_order_side("buy", buy_orders, bid_price, buy_size)
         self.handle_order_side("sell", sell_orders, ask_price, sell_size)
@@ -225,6 +230,8 @@ class AvellanedaMarketMaker:
             return
 
         current_price = self.api.get_price()[self.trade_side]
+        if current_price is None:
+            return
         should_place = (action == "buy" and desired_price < current_price) or (
             action == "sell" and desired_price > current_price
         )

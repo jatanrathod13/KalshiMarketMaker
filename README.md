@@ -12,6 +12,7 @@ The runtime is a two-step loop:
    - Pull open markets from Kalshi.
    - Exclude multivariate/combo markets (`mve_filter=exclude`).
    - Enforce local hard filter to binary-only markets.
+   - Require a two-sided book (resting bid and ask) and skip markets closing within `min_minutes_to_close`.
    - Filter using `min_volume_24h` and `min_spread_cents`.
    - Score candidates with weighted normalized volume and spread.
    - Keep the top `top_n` markets.
@@ -22,6 +23,7 @@ The runtime is a two-step loop:
    - Inventory risk aversion increases as inventory approaches limits.
    - New risk accumulation is blocked when global portfolio cap is reached.
    - Worker manages resting orders on each loop interval.
+   - If the book goes one-sided, the worker pulls its quotes and waits instead of quoting around a fake mid.
 
 ## Lifecycle and Safety
 
@@ -47,6 +49,7 @@ The runtime is a two-step loop:
    ```bash
    KALSHI_API_KEY_ID=your_api_key_id
    KALSHI_PRIVATE_KEY_PATH=/absolute/path/to/your/private-key.key
+   # or, instead of a file: KALSHI_PRIVATE_KEY=<PEM or base64 PKCS8 DER; RSA or Ed25519>
    KALSHI_BASE_URL=https://demo-api.kalshi.co/trade-api/v2
    ```
 
@@ -73,6 +76,7 @@ dynamic:
     worker_shutdown_timeout_seconds: 15
     min_volume_24h: 500
     min_spread_cents: 2
+    min_minutes_to_close: 10
     volume_weight: 0.35
     spread_weight: 0.65
       mve_filter: exclude

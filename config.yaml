@@ -10,6 +10,7 @@ dynamic:
     worker_shutdown_timeout_seconds: 15
     min_volume_24h: 500
     min_spread_cents: 2
+    min_minutes_to_close: 10
     volume_weight: 0.35
     spread_weight: 0.65
     mve_filter: exclude
