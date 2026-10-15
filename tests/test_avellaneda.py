@@ -409,3 +409,23 @@ class TestMveRejection:
         ranked = select_top_markets(markets, self.DEFAULT_CFG)
         tickers = [t for t, *_ in ranked]
         assert tickers == ["CLEAN-BINARY"]
+
+
+class TestReduceOnly:
+    """A deselected market holding inventory only quotes to reduce it."""
+
+    def test_reduce_only_blocks_accumulation_when_short(self):
+        mm = make_mm(worker_state={"reduce_only": True})
+        buy_size, sell_size = mm.calculate_order_sizes(inventory=-1, current_orders=[])
+        assert buy_size >= 1
+        assert sell_size == 0
+
+    def test_reduce_only_blocks_accumulation_when_long(self):
+        mm = make_mm(worker_state={"reduce_only": True})
+        buy_size, sell_size = mm.calculate_order_sizes(inventory=2, current_orders=[])
+        assert buy_size == 0
+        assert sell_size >= 1
+
+    def test_reduce_only_flat_quotes_nothing(self):
+        mm = make_mm(worker_state={"reduce_only": True})
+        assert mm.calculate_order_sizes(inventory=0, current_orders=[]) == (0, 0)

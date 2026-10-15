@@ -25,6 +25,7 @@ class AvellanedaMarketMaker:
         max_contracts_per_market: Optional[int] = None,
         reserve_contracts_buffer: int = 0,
         shared_risk_state: Optional[Dict] = None,
+        worker_state: Optional[Dict] = None,
     ):
         self.api = api
         self.logger = logger
@@ -42,6 +43,9 @@ class AvellanedaMarketMaker:
         self.max_contracts_per_market = max_contracts_per_market
         self.reserve_contracts_buffer = max(0, int(reserve_contracts_buffer))
         self.shared_risk_state = shared_risk_state or {"active_markets": 1}
+        # Shared with the selector; "reduce_only" is set while this market holds
+        # inventory but is no longer selected, so the worker only works the position off.
+        self.worker_state = worker_state if worker_state is not None else {}
 
     def run(self, dt: float, stop_event=None):
         start_time = time.time()
@@ -67,7 +71,8 @@ class AvellanedaMarketMaker:
             buy_size, sell_size = self.calculate_order_sizes(inventory, current_orders)
 
             self.logger.info(
-                f"t={current_time:.2f}s mid={mid_price:.4f} inventory={inventory} "
+                f"t={current_time:.2f}s {'[reduce-only] ' if self.worker_state.get('reduce_only') else ''}"
+                f"mid={mid_price:.4f} inventory={inventory} "
                 f"reservation={reservation_price:.4f} bid={bid_price:.4f} ask={ask_price:.4f}"
             )
 
@@ -170,7 +175,7 @@ class AvellanedaMarketMaker:
 
         base_size = max(1, int(effective_max_position * self.position_limit_buffer))
         accumulation_size = min(base_size, local_remaining_capacity, global_remaining_capacity)
-        if global_remaining_capacity <= 0:
+        if global_remaining_capacity <= 0 or self.worker_state.get("reduce_only"):
             accumulation_size = 0
 
         reduction_size = max(1, min(effective_max_position, max(base_size, abs(effective_inventory))))

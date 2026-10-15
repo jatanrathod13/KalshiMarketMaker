@@ -12,10 +12,11 @@ The runtime is a two-step loop:
    - Pull open markets from Kalshi.
    - Exclude multivariate/combo markets (`mve_filter=exclude`).
    - Enforce local hard filter to binary-only markets.
-   - Require a two-sided book (resting bid and ask) and skip markets closing within `min_minutes_to_close`.
+   - Require a two-sided book (resting bid and ask), a mid within `min_mid_price`..`max_mid_price`, and skip markets closing within `min_minutes_to_close`.
    - Filter using `min_volume_24h` and `min_spread_cents`.
    - Score candidates with weighted normalized volume and spread.
-   - Keep the top `top_n` markets.
+   - Keep the top `top_n` markets, preferring incumbents (`min_hold_seconds`, `retention_buffer`) to avoid churn.
+   - Markets where the account holds a position but that are no longer selected keep a reduce-only worker until flat.
 
 2. Market making
    - Run one Avellaneda-Stoikov worker per selected market.
@@ -78,6 +79,10 @@ dynamic:
     min_spread_cents: 2
     min_minutes_to_close: 10
     exchange_indexes: [0]  # shards your balance is on (see /portfolio/balance balance_breakdown)
+    min_mid_price: 0.10    # skip near-0/1 markets: tiny spread vs. full payout risk
+    max_mid_price: 0.90
+    min_hold_seconds: 300  # keep a newly selected market at least this long
+    retention_buffer: 5    # keep incumbents while they rank within top_n + this
     volume_weight: 0.35
     spread_weight: 0.65
       mve_filter: exclude

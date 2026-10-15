@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from ..core.fields import count_value, is_two_sided, price_dollars
 
@@ -62,16 +62,33 @@ def minutes_to_close(market: Dict) -> float:
     return (closes_at - datetime.now(timezone.utc)).total_seconds() / 60
 
 
+def mid_price(market: Dict) -> Optional[float]:
+    yes_bid = price_dollars(market, "yes_bid")
+    yes_ask = price_dollars(market, "yes_ask")
+    if yes_bid is None or yes_ask is None:
+        return None
+    return (yes_bid + yes_ask) / 2
+
+
 def select_top_markets(markets: List[Dict], selector_cfg: Dict) -> List[Tuple[str, float, float, float]]:
+    top_n = int(selector_cfg.get("top_n", 8))
+    return rank_markets(markets, selector_cfg)[:top_n]
+
+
+def rank_markets(markets: List[Dict], selector_cfg: Dict) -> List[Tuple[str, float, float, float]]:
+    """All eligible markets as (ticker, score, volume_24h, spread_cents), best first."""
     min_volume_24h = safe_float(selector_cfg.get("min_volume_24h", 100))
     min_spread_cents = safe_float(selector_cfg.get("min_spread_cents", 1))
-    top_n = int(selector_cfg.get("top_n", 8))
     volume_weight = safe_float(selector_cfg.get("volume_weight", 0.5))
     spread_weight = safe_float(selector_cfg.get("spread_weight", 0.5))
     min_minutes_to_close = safe_float(selector_cfg.get("min_minutes_to_close", 10))
     # Markets live on exchange shards and orders are funded from that shard's balance.
     exchange_indexes = selector_cfg.get("exchange_indexes")
     allowed_exchanges = None if exchange_indexes is None else {int(index) for index in exchange_indexes}
+    # Near 0 or 1 the spread earned is tiny relative to the payout risked
+    # (selling YES at 3c risks 97c), so only quote mid-range prices.
+    min_mid_price = safe_float(selector_cfg.get("min_mid_price", 0.10))
+    max_mid_price = safe_float(selector_cfg.get("max_mid_price", 0.90))
 
     def collect_candidates(ignore_thresholds: bool) -> List[Dict]:
         collected = []
@@ -88,6 +105,8 @@ def select_top_markets(markets: List[Dict], selector_cfg: Dict) -> List[Tuple[st
             if not is_two_sided(market) or minutes_to_close(market) < min_minutes_to_close:
                 continue
             if allowed_exchanges is not None and int(market.get("exchange_index", 0)) not in allowed_exchanges:
+                continue
+            if not min_mid_price <= mid_price(market) <= max_mid_price:
                 continue
 
             volume_24h = count_value(market, "volume_24h", default=count_value(market, "volume"))
@@ -131,4 +150,37 @@ def select_top_markets(markets: List[Dict], selector_cfg: Dict) -> List[Tuple[st
         ranked.append((market["ticker"], score, market["volume_24h"], market["spread_cents"]))
 
     ranked.sort(key=lambda row: row[1], reverse=True)
-    return ranked[:top_n]
+    return ranked
+
+
+def choose_markets(
+    ranked: List[Tuple[str, float, float, float]],
+    selected_since: Dict[str, float],
+    now: float,
+    selector_cfg: Dict,
+) -> List[str]:
+    """Pick top_n tickers, keeping incumbents to avoid churning quotes every refresh.
+
+    An incumbent (currently selected) ticker that is still eligible keeps its slot
+    while it is within min_hold_seconds of being selected, or while it still ranks
+    within the top (top_n + retention_buffer). Remaining slots go to the best
+    new candidates.
+    """
+    top_n = int(selector_cfg.get("top_n", 8))
+    min_hold_seconds = safe_float(selector_cfg.get("min_hold_seconds", 300))
+    retention_rank = top_n + int(selector_cfg.get("retention_buffer", top_n))
+
+    rank_of = {row[0]: index for index, row in enumerate(ranked)}
+    kept = [
+        ticker
+        for ticker, since in sorted(selected_since.items(), key=lambda item: rank_of.get(item[0], len(ranked)))
+        if ticker in rank_of and (now - since < min_hold_seconds or rank_of[ticker] < retention_rank)
+    ][:top_n]
+
+    chosen = list(kept)
+    for ticker, _, _, _ in ranked:
+        if len(chosen) >= top_n:
+            break
+        if ticker not in chosen:
+            chosen.append(ticker)
+    return chosen

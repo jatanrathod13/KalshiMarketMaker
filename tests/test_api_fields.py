@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from kalshi_market_maker.core.avellaneda import AvellanedaMarketMaker
 from kalshi_market_maker.core.fields import is_two_sided, order_action, position_count, price_dollars
-from kalshi_market_maker.selection.scoring import compute_spread_cents, select_top_markets
+from kalshi_market_maker.selection.scoring import choose_markets, compute_spread_cents, select_top_markets
 
 
 def market(ticker="M", bid="0.4500", ask="0.5500", bid_size="10.00", ask_size="10.00", volume="1000.00", close_in_min=120):
@@ -102,3 +102,32 @@ def test_selector_filters_exchange_shards():
     shard0, shard2 = market("SHARD0"), market("SHARD2")
     shard2["exchange_index"] = 2
     assert [row[0] for row in select_top_markets([shard0, shard2], cfg)] == ["SHARD0"]
+
+
+def test_selector_skips_extreme_prices():
+    cfg = {"min_volume_24h": 0, "min_spread_cents": 0, "top_n": 10}
+    markets = [market("MID"), market("CHEAP", bid="0.0100", ask="0.0400"), market("RICH", bid="0.9500", ask="0.9800")]
+    assert [row[0] for row in select_top_markets(markets, cfg)] == ["MID"]
+
+
+def ranked_rows(*tickers):
+    return [(ticker, 1.0 - index * 0.1, 0.0, 2.0) for index, ticker in enumerate(tickers)]
+
+
+def test_choose_markets_keeps_incumbent_within_hold_window():
+    cfg = {"top_n": 2, "min_hold_seconds": 300, "retention_buffer": 0}
+    ranked = ranked_rows("NEW1", "NEW2", "OLD")
+    assert choose_markets(ranked, {"OLD": 1000.0}, now=1100.0, selector_cfg=cfg) == ["OLD", "NEW1"]
+
+
+def test_choose_markets_keeps_incumbent_ranked_within_buffer():
+    cfg = {"top_n": 2, "min_hold_seconds": 0, "retention_buffer": 2}
+    ranked = ranked_rows("NEW1", "NEW2", "OLD", "X")
+    assert choose_markets(ranked, {"OLD": 0.0}, now=10_000.0, selector_cfg=cfg) == ["OLD", "NEW1"]
+
+
+def test_choose_markets_replaces_stale_or_ineligible_incumbents():
+    cfg = {"top_n": 2, "min_hold_seconds": 0, "retention_buffer": 0}
+    ranked = ranked_rows("NEW1", "NEW2", "OLD")
+    # OLD ranks outside the buffer and is past its hold; GONE is no longer eligible at all.
+    assert choose_markets(ranked, {"OLD": 0.0, "GONE": 9_999.0}, now=10_000.0, selector_cfg=cfg) == ["NEW1", "NEW2"]

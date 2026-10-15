@@ -12,6 +12,10 @@ dynamic:
     min_spread_cents: 2
     min_minutes_to_close: 10
     exchange_indexes: [0]
+    min_mid_price: 0.10
+    max_mid_price: 0.90
+    min_hold_seconds: 300
+    retention_buffer: 5
     volume_weight: 0.35
     spread_weight: 0.65
     mve_filter: exclude

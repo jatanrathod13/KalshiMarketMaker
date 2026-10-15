@@ -40,6 +40,7 @@ def run_market_worker(
     dynamic_config: Dict,
     stop_event: threading.Event,
     shared_risk_state: Dict | None = None,
+    worker_state: Dict | None = None,
 ):
     logger = build_logger(f"Worker_{ticker}", dynamic_config.get("log_level", "INFO"))
 
@@ -70,6 +71,7 @@ def run_market_worker(
         logger,
         dynamic_config.get("risk", {}),
         shared_risk_state,
+        worker_state,
     )
     dt = dynamic_config.get("dt", 2.0)
 
