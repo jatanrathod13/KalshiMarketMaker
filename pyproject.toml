@@ -24,3 +24,6 @@ kalshi-dashboard = "kalshi_market_maker.cli.dashboard:main"
 
 [tool.setuptools.packages.find]
 include = ["kalshi_market_maker*"]
+
+[tool.setuptools.package-data]
+"kalshi_market_maker.model" = ["*.json"]
