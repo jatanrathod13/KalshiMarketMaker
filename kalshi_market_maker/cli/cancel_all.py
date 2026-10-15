@@ -4,6 +4,7 @@ from typing import Dict, List
 
 from dotenv import load_dotenv
 
+from ..core.fields import position_count, price_dollars
 from ..factories import create_api
 from ..logging_utils import build_logger
 
@@ -15,13 +16,6 @@ def filter_orders(orders: List[Dict], side: str = None, action: str = None) -> L
     if action:
         filtered = [order for order in filtered if order.get("action") == action]
     return filtered
-
-
-def parse_position(raw_position) -> int:
-    try:
-        return int(float(raw_position))
-    except (TypeError, ValueError):
-        return 0
 
 
 def cancel_order_batch(api, orders: List[Dict], logger, dry_run: bool) -> Dict[str, int]:
@@ -168,7 +162,7 @@ def main():
                 if args.ticker and ticker != args.ticker:
                     continue
 
-                signed_position = parse_position(position.get("position", 0))
+                signed_position = position_count(position)
                 if signed_position == 0:
                     continue
 
@@ -178,20 +172,20 @@ def main():
                 if signed_position > 0:
                     action = "sell"
                     side = "yes"
-                    best_bid = market_data.get("yes_bid")
-                    if best_bid is None:
+                    best_bid = price_dollars(market_data, "yes_bid")
+                    if not best_bid:
                         logger.error(f"Skipping liquidation for {ticker}: missing yes_bid")
                         continue
-                    price_cents = max(1, int(best_bid) - price_offset_cents)
+                    price_cents = max(1, round(best_bid * 100) - price_offset_cents)
                     quantity = signed_position
                 else:
                     action = "buy"
                     side = "yes"
-                    best_ask = market_data.get("yes_ask")
-                    if best_ask is None:
+                    best_ask = price_dollars(market_data, "yes_ask")
+                    if best_ask is None or best_ask >= 1:
                         logger.error(f"Skipping liquidation for {ticker}: missing yes_ask")
                         continue
-                    price_cents = min(99, int(best_ask) + price_offset_cents)
+                    price_cents = min(99, round(best_ask * 100) + price_offset_cents)
                     quantity = abs(signed_position)
 
                 liquidation_candidates.append(
@@ -256,7 +250,7 @@ def main():
                 continue
             if args.ticker and ticker != args.ticker:
                 continue
-            signed_position = parse_position(position.get("position", 0))
+            signed_position = position_count(position)
             if signed_position != 0:
                 remaining_non_zero.append((ticker, signed_position))
 

@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
 
+from ..core.fields import count_value, position_count
 from ..factories import create_api
 from ..logging_utils import build_logger
 
@@ -63,9 +64,9 @@ def draw_line(stdscr, row: int, text: str, width: int, attr=0):
 
 
 def summarize_positions(positions: List[Dict]) -> Dict[str, float]:
-    non_zero = [p for p in positions if safe_int(p.get("position", 0)) != 0]
-    total_abs_contracts = sum(abs(safe_int(p.get("position", 0))) for p in non_zero)
-    net_contracts = sum(safe_int(p.get("position", 0)) for p in non_zero)
+    non_zero = [p for p in positions if position_count(p) != 0]
+    total_abs_contracts = sum(abs(position_count(p)) for p in non_zero)
+    net_contracts = sum(position_count(p) for p in non_zero)
     realized_pnl = sum(money_from_fields(p, "realized_pnl_dollars", "realized_pnl") for p in non_zero)
     market_exposure = sum(money_from_fields(p, "market_exposure_dollars", "market_exposure") for p in non_zero)
 
@@ -204,8 +205,8 @@ def render_dashboard(stdscr, args, api, logger):
         draw_line(stdscr, positions_header_row, "Positions (ticker | pos | exposure$ | realized_pnl$)", width, curses.A_UNDERLINE)
 
         sorted_positions = sorted(
-            [p for p in last_positions if safe_int(p.get("position", 0)) != 0],
-            key=lambda p: abs(safe_int(p.get("position", 0))),
+            [p for p in last_positions if position_count(p) != 0],
+            key=lambda p: abs(position_count(p)),
             reverse=True,
         )
 
@@ -217,7 +218,7 @@ def render_dashboard(stdscr, args, api, logger):
                 row,
                 (
                     f"{position.get('ticker', 'UNKNOWN'):<36} | "
-                    f"{safe_int(position.get('position', 0)):>6} | "
+                    f"{position_count(position):>6} | "
                     f"{money_from_fields(position, 'market_exposure_dollars', 'market_exposure'):>10.2f} | "
                     f"{money_from_fields(position, 'realized_pnl_dollars', 'realized_pnl'):>10.2f}"
                 ),
@@ -240,7 +241,7 @@ def render_dashboard(stdscr, args, api, logger):
                     f"{str(order.get('order_id', 'n/a')):<12} | "
                     f"{str(order.get('action', 'n/a')):<4} | "
                     f"{str(order.get('side', 'n/a')):<3} | "
-                    f"{safe_int(order.get('remaining_count', 0)):>6}"
+                    f"{int(count_value(order, 'remaining_count')):>6}"
                 ),
                 width,
             )

@@ -1,5 +1,7 @@
 import base64
+import binascii
 import logging
+import os
 import random
 import time
 import uuid
@@ -8,8 +10,9 @@ from urllib.parse import urlparse
 
 import requests
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric import ed25519, padding
 
+from .fields import position_count, price_dollars
 from .interfaces import AbstractTradingAPI
 
 
@@ -24,8 +27,8 @@ class KalshiTradingAPI(AbstractTradingAPI):
     ):
         if not api_key_id:
             raise ValueError("KALSHI_API_KEY_ID environment variable is required")
-        if not private_key_path:
-            raise ValueError("KALSHI_PRIVATE_KEY_PATH environment variable is required")
+        if not private_key_path and not os.getenv("KALSHI_PRIVATE_KEY"):
+            raise ValueError("KALSHI_PRIVATE_KEY_PATH or KALSHI_PRIVATE_KEY environment variable is required")
 
         self.api_key_id = api_key_id
         self.private_key_path = private_key_path
@@ -36,8 +39,19 @@ class KalshiTradingAPI(AbstractTradingAPI):
         self.logger.info("Kalshi API client initialized")
 
     def load_private_key(self):
-        with open(self.private_key_path, "rb") as private_key_file:
-            return serialization.load_pem_private_key(private_key_file.read(), password=None)
+        if self.private_key_path:
+            with open(self.private_key_path, "rb") as private_key_file:
+                return serialization.load_pem_private_key(private_key_file.read(), password=None)
+
+        # Inline key: PEM text, or base64-encoded PKCS8 DER.
+        raw_key = os.environ["KALSHI_PRIVATE_KEY"].strip().replace("\\n", "\n")
+        if raw_key.startswith("-----BEGIN"):
+            return serialization.load_pem_private_key(raw_key.encode("utf-8"), password=None)
+        try:
+            der_key = base64.b64decode(raw_key, validate=True)
+        except binascii.Error as exc:
+            raise ValueError("KALSHI_PRIVATE_KEY must be PEM or base64-encoded DER") from exc
+        return serialization.load_der_private_key(der_key, password=None)
 
     def logout(self):
         return None
@@ -45,6 +59,8 @@ class KalshiTradingAPI(AbstractTradingAPI):
     def _create_signature(self, timestamp: str, method: str, path: str) -> str:
         sign_path = path.split("?")[0]
         message = f"{timestamp}{method.upper()}{sign_path}".encode("utf-8")
+        if isinstance(self.private_key, ed25519.Ed25519PrivateKey):
+            return base64.b64encode(self.private_key.sign(message)).decode("utf-8")
         signature = self.private_key.sign(
             message,
             padding.PSS(
@@ -133,7 +149,7 @@ class KalshiTradingAPI(AbstractTradingAPI):
         total_position = 0
         for position in positions:
             if position["ticker"] == self.market_ticker:
-                total_position += position["position"]
+                total_position += position_count(position)
 
         return total_position
 
@@ -141,10 +157,15 @@ class KalshiTradingAPI(AbstractTradingAPI):
         path = f"/markets/{self.market_ticker}"
         data = self.make_request("GET", path)
 
-        yes_bid = float(data["market"]["yes_bid"]) / 100
-        yes_ask = float(data["market"]["yes_ask"]) / 100
-        no_bid = float(data["market"]["no_bid"]) / 100
-        no_ask = float(data["market"]["no_ask"]) / 100
+        market = data["market"]
+
+        def side_quotes(side: str):
+            bid = price_dollars(market, f"{side}_bid")
+            ask = price_dollars(market, f"{side}_ask")
+            return (0.0 if bid is None else bid), (1.0 if ask is None else ask)
+
+        yes_bid, yes_ask = side_quotes("yes")
+        no_bid, no_ask = side_quotes("no")
 
         yes_mid_price = round((yes_bid + yes_ask) / 2, 2)
         no_mid_price = round((no_bid + no_ask) / 2, 2)
@@ -170,27 +191,35 @@ class KalshiTradingAPI(AbstractTradingAPI):
         quantity: int,
         expiration_ts: int = None,
     ) -> str:
-        path = "/portfolio/orders"
+        # V2 orders live on a single YES book: buying YES (or selling NO) is a bid,
+        # selling YES (or buying NO) is an ask, priced in YES dollars.
+        # V2 create has no expiration field, so expiration_ts is not sent; workers
+        # and the liquidation loop cancel stale orders themselves.
+        action = action.lower()
+        if side == "yes":
+            book_side = "bid" if action == "buy" else "ask"
+            yes_price = price
+        else:
+            book_side = "ask" if action == "buy" else "bid"
+            yes_price = 1 - price
+
+        cents = int(round(yes_price * 100))
+        if not 1 <= cents <= 99:
+            raise ValueError(f"Order price out of range: {action} {side} @ {price}")
+
+        path = "/portfolio/events/orders"
         data = {
             "ticker": ticker,
-            "action": action.lower(),
-            "type": "limit",
-            "side": side,
-            "count": quantity,
+            "side": book_side,
+            "count": str(int(quantity)),
+            "price": f"{cents / 100:.2f}",
             "client_order_id": str(uuid.uuid4()),
+            "time_in_force": "good_till_canceled",
+            "self_trade_prevention_type": "taker_at_cross",
         }
 
-        price_to_send = int(price * 100)
-        if side == "yes":
-            data["yes_price"] = price_to_send
-        else:
-            data["no_price"] = price_to_send
-
-        if expiration_ts is not None:
-            data["expiration_ts"] = expiration_ts
-
         response = self.make_request("POST", path, data=data)
-        return str(response["order"]["order_id"])
+        return str(response["order_id"])
 
     def get_market(self, ticker: str) -> Dict:
         path = f"/markets/{ticker}"
@@ -228,9 +257,9 @@ class KalshiTradingAPI(AbstractTradingAPI):
         return positions
 
     def cancel_order(self, order_id: int) -> bool:
-        path = f"/portfolio/orders/{order_id}"
+        path = f"/portfolio/events/orders/{order_id}"
         response = self.make_request("DELETE", path)
-        return response["reduced_by"] > 0
+        return float(response.get("reduced_by", 0)) > 0
 
     def get_orders(self, ticker: Optional[str] = None, status: str = "resting") -> List[Dict]:
         path = "/portfolio/orders"

@@ -91,6 +91,10 @@ def run_dynamic_strategy(dynamic_config: Dict):
                             )
 
                 for ticker in selected_tickers:
+                    if ticker in active_workers and active_workers[ticker][1].done():
+                        # Worker exited (e.g. exchange outage) while still selected; restart it.
+                        logger.warning(f"Worker for {ticker} exited; restarting")
+                        del active_workers[ticker]
                     if ticker not in active_workers:
                         logger.info(f"Starting worker for selected ticker {ticker}")
                         stop_event = threading.Event()

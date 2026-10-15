@@ -1,5 +1,7 @@
 from typing import Dict, List, Tuple
 
+from ..core.fields import count_value, price_dollars
+
 
 def safe_float(value, default=0.0):
     try:
@@ -9,11 +11,11 @@ def safe_float(value, default=0.0):
 
 
 def compute_spread_cents(market: Dict) -> float:
-    yes_bid = safe_float(market.get("yes_bid"), -1)
-    yes_ask = safe_float(market.get("yes_ask"), -1)
-    if yes_bid < 0 or yes_ask < 0:
+    yes_bid = price_dollars(market, "yes_bid")
+    yes_ask = price_dollars(market, "yes_ask")
+    if yes_bid is None or yes_ask is None:
         return -1
-    return yes_ask - yes_bid
+    return round((yes_ask - yes_bid) * 100, 2)
 
 
 def is_supported_binary_market(market: Dict) -> bool:
@@ -65,7 +67,7 @@ def select_top_markets(markets: List[Dict], selector_cfg: Dict) -> List[Tuple[st
             if not ticker:
                 continue
 
-            volume_24h = safe_float(market.get("volume_24h", market.get("volume", 0)))
+            volume_24h = count_value(market, "volume_24h", default=count_value(market, "volume"))
             spread_cents = compute_spread_cents(market)
             if spread_cents < 0:
                 continue

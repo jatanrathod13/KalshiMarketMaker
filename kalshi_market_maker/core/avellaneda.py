@@ -2,6 +2,7 @@ import math
 import time
 from typing import Dict, List, Tuple, Optional
 
+from .fields import count_value, position_count, price_dollars
 from .interfaces import AbstractTradingAPI
 
 
@@ -132,7 +133,7 @@ class AvellanedaMarketMaker:
 
         try:
             positions = self.api.list_all_positions()
-            total_abs_position = sum(abs(int(float(position.get("position", 0)))) for position in positions)
+            total_abs_position = sum(abs(position_count(position)) for position in positions)
             remaining = int(self.max_global_contracts) - self.reserve_contracts_buffer - total_abs_position
             return max(0, remaining)
         except Exception as global_exception:
@@ -146,7 +147,7 @@ class AvellanedaMarketMaker:
         for order in current_orders:
             if order.get("side") != self.trade_side:
                 continue
-            remaining = int(float(order.get("remaining_count", 0)))
+            remaining = int(count_value(order, "remaining_count"))
             if order.get("action") == "buy":
                 pending_buy += remaining
             elif order.get("action") == "sell":
@@ -209,15 +210,12 @@ class AvellanedaMarketMaker:
         keep_order = None
 
         for order in orders:
-            current_price = (
-                float(order["yes_price"]) / 100
-                if self.trade_side == "yes"
-                else float(order["no_price"]) / 100
-            )
+            current_price = price_dollars(order, f"{self.trade_side}_price")
             if (
                 keep_order is None
+                and current_price is not None
                 and abs(current_price - desired_price) < 0.01
-                and order["remaining_count"] == desired_size
+                and int(count_value(order, "remaining_count")) == desired_size
             ):
                 keep_order = order
             else:
