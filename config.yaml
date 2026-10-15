@@ -11,12 +11,13 @@ dynamic:
     min_volume_24h: 500
     min_spread_cents: 2
     min_minutes_to_close: 10
+    exchange_indexes: [0]
     volume_weight: 0.35
     spread_weight: 0.65
     mve_filter: exclude
     page_limit: 1000
-    max_pages: 30
-    max_markets: 30000
+    max_pages: 100
+    max_markets: 100000
     # series_ticker: "FED"
   market_maker:
     max_position: 3

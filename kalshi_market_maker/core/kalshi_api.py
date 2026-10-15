@@ -126,7 +126,9 @@ class KalshiTradingAPI(AbstractTradingAPI):
                 response.raise_for_status()
                 return response.json()
             except requests.exceptions.RequestException as request_exception:
-                if attempt < max_retries:
+                status_code = getattr(getattr(request_exception, "response", None), "status_code", None)
+                is_client_error = status_code is not None and status_code not in retryable_codes and status_code < 500
+                if attempt < max_retries and not is_client_error:
                     backoff = 0.5 * (2**attempt) + random.uniform(0, 0.25)
                     self.logger.warning(
                         f"Request exception for {method} {path}: {request_exception}. Retrying in {backoff:.2f}s "

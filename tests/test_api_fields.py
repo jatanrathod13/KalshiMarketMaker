@@ -95,3 +95,10 @@ def test_market_maker_pulls_quotes_when_book_one_sided():
     mm.run(dt=0.1)
     assert api.canceled == ["o1"]
     assert api.placed == []
+
+
+def test_selector_filters_exchange_shards():
+    cfg = {"min_volume_24h": 0, "min_spread_cents": 0, "top_n": 10, "exchange_indexes": [0]}
+    shard0, shard2 = market("SHARD0"), market("SHARD2")
+    shard2["exchange_index"] = 2
+    assert [row[0] for row in select_top_markets([shard0, shard2], cfg)] == ["SHARD0"]

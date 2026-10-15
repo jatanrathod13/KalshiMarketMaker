@@ -77,6 +77,7 @@ dynamic:
     min_volume_24h: 500
     min_spread_cents: 2
     min_minutes_to_close: 10
+    exchange_indexes: [0]  # shards your balance is on (see /portfolio/balance balance_breakdown)
     volume_weight: 0.35
     spread_weight: 0.65
       mve_filter: exclude

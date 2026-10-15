@@ -69,6 +69,9 @@ def select_top_markets(markets: List[Dict], selector_cfg: Dict) -> List[Tuple[st
     volume_weight = safe_float(selector_cfg.get("volume_weight", 0.5))
     spread_weight = safe_float(selector_cfg.get("spread_weight", 0.5))
     min_minutes_to_close = safe_float(selector_cfg.get("min_minutes_to_close", 10))
+    # Markets live on exchange shards and orders are funded from that shard's balance.
+    exchange_indexes = selector_cfg.get("exchange_indexes")
+    allowed_exchanges = None if exchange_indexes is None else {int(index) for index in exchange_indexes}
 
     def collect_candidates(ignore_thresholds: bool) -> List[Dict]:
         collected = []
@@ -83,6 +86,8 @@ def select_top_markets(markets: List[Dict], selector_cfg: Dict) -> List[Tuple[st
             # Never quote one-sided books or markets about to close; these are hard
             # filters, not relaxed by the ignore_thresholds fallback below.
             if not is_two_sided(market) or minutes_to_close(market) < min_minutes_to_close:
+                continue
+            if allowed_exchanges is not None and int(market.get("exchange_index", 0)) not in allowed_exchanges:
                 continue
 
             volume_24h = count_value(market, "volume_24h", default=count_value(market, "volume"))
